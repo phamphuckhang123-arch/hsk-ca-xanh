@@ -224,6 +224,7 @@ window.addEventListener('hashchange', route);
 function route() {
   if (cleanup) { cleanup(); cleanup = null; }
   ttsStop();
+  document.querySelectorAll('.modal').forEach(x => x.remove());
   const foot = $('.foot'); if (foot) foot.remove();
   const p = location.hash.replace(/^#\/?/, '').split('/').filter(Boolean);
   window.scrollTo(0, 0);
@@ -545,7 +546,7 @@ function qBody(q, sel, review) {
     }).join('')}</div>`;
   } else if (q.kind === 'write') {
     h += `<div class="passage" style="text-align:center;font-size:22px">${esc(q.text).replace('（　）', `<ruby><span style="display:inline-block;min-width:1.6em;border-bottom:2px solid var(--pink)">${esc(sel || '')}</span><rt style="font-size:.6em;color:var(--pink)">${esc(q.py)}</rt></ruby>`)}</div>
-    ${review ? `<div class="fb ${sel === q.ans ? 'ok' : 'bad'}">Đáp án: ${esc(q.ans)}</div>` : `<input type="text" id="wr" maxlength="2" placeholder="Viết chữ Hán (${esc(q.py)})" value="${esc(sel || '')}" style="margin-top:12px;font-size:22px;text-align:center" lang="zh-CN">`}`;
+    ${review ? `<div class="fb ${isRight(q, sel) ? 'ok' : 'bad'}">Đáp án: ${esc(q.ans)}</div>` : `<input type="text" id="wr" placeholder="Viết chữ Hán (${esc(q.py)})" value="${esc(sel || '')}" style="margin-top:12px;font-size:22px;text-align:center" lang="zh-CN" autocomplete="off">`}`;
   } else if (q.kind === 'make') {
     h += `<div class="muted">Dùng từ dưới đây viết một câu tiếng Trung hoàn chỉnh:</div><div class="passage" style="text-align:center;font-size:28px">${zh(q.word)}</div>
     ${review ? `<div class="explain">Bài làm: ${esc(sel || '(chưa làm)')}</div><div class="fb ${makeOk(q, sel) ? 'ok' : 'bad'}">${makeOk(q, sel) ? 'Đạt yêu cầu cơ bản' : 'Chưa đạt yêu cầu'} (câu phải có từ “${esc(q.word)}”, đủ dài và có dấu câu cuối)</div>`
@@ -556,13 +557,13 @@ function qBody(q, sel, review) {
 function isRight(q, a) {
   if (a == null || a === '') return false;
   if (q.kind === 'mc') return a === q.ans;
-  if (q.kind === 'write') return a.trim() === q.ans;
+  if (q.kind === 'write') return (String(a).match(/[㐀-鿿]/g) || []).join('') === q.ans; // chỉ so chữ Hán, bỏ qua pinyin/dấu cách còn sót khi gõ
   if (q.kind === 'make') return makeOk(q, a);
   return false;
 }
 function drawQ() {
   const { qs, idx, lv } = EX; const q = qs[idx];
-  app.innerHTML = `<div class="exambar"><b>HSK ${lv}</b><span class="muted">${esc(q.sec)}</span><span class="spacer"></span><span class="timer" id="tm">--:--</span><button class="chip" id="grid" style="background:var(--pri);">☰ ${EX.ans.filter(a => a != null).length}/${qs.length}</button></div>
+  app.innerHTML = `<div class="exambar"><b>HSK ${lv}</b><span class="muted sn">${esc(q.sec)}</span><span class="spacer"></span><span class="timer" id="tm">--:--</span><button class="chip" id="grid" style="background:var(--pri);">☰ ${EX.ans.filter(a => a != null).length}/${qs.length}</button><button class="chip" id="sub2" style="background:var(--pink)">Nộp bài</button></div>
   <div class="card"><div class="muted" style="font-weight:600;color:var(--pri-d)">${esc(q.part)}</div>
   <div class="qhead" style="margin-top:8px"><span class="qnum">${idx + 1}</span></div>
   ${qBody(q, EX.ans[idx], false)}</div>`;
@@ -572,7 +573,8 @@ function drawQ() {
   const go = n => { EX.idx = n; drawQ(); window.scrollTo(0, 0); };
   $('#pv').onclick = () => idx > 0 && go(idx - 1);
   if ($('#nx')) $('#nx').onclick = () => go(idx + 1);
-  if ($('#sub')) $('#sub').onclick = () => { const left = qs.filter((_, i) => EX.ans[i] == null).length; if (confirm(left > 0 ? `Còn ${left} câu chưa làm. Nộp bài?` : 'Nộp bài?')) finishExam(); };
+  if ($('#sub')) $('#sub').onclick = askSubmit;
+  $('#sub2').onclick = askSubmit;
   $('#grid').onclick = () => navModal(false);
   bindQ(q, idx, false);
   const left = EXAMS[lv].time * 60 - Math.floor((Date.now() - EX.start) / 1000);
@@ -602,12 +604,32 @@ function navModal(review) {
   <div class="navgrid" style="margin-top:12px">${EX.qs.map((q, i) => {
     let c = review ? (isRight(q, EX.ans[i]) ? 'ok' : 'bad') : (EX.ans[i] != null ? 'a' : '');
     if (i === EX.idx) c += ' cur'; return `<button class="${c}" data-n="${i}">${i + 1}</button>`;
-  }).join('')}</div></div>`;
+  }).join('')}</div>${review ? '' : '<button class="btn pink block" id="subm" style="margin-top:14px">Nộp bài</button>'}</div>`;
   document.body.appendChild(m);
-  m.onclick = e => { const b = e.target.closest('[data-n]'); if (b) { EX.idx = +b.dataset.n; m.remove(); review ? drawReview() : drawQ(); } else if (e.target === m || e.target.id === 'cl') m.remove(); };
+  m.onclick = e => {
+    const b = e.target.closest('[data-n]');
+    if (b) { EX.idx = +b.dataset.n; m.remove(); review ? drawReview() : drawQ(); }
+    else if (e.target.id === 'subm') { m.remove(); askSubmit(); }
+    else if (e.target === m || e.target.id === 'cl') m.remove();
+  };
+}
+// Hỏi lại trước khi nộp bằng hộp ngay trong trang: confirm() của trình duyệt bị chặn trong Zalo, Messenger, Facebook…
+function askSubmit() {
+  if (!EX || EX.done) return;
+  const left = EX.qs.filter((_, i) => EX.ans[i] == null).length;
+  const m = document.createElement('div'); m.className = 'modal';
+  m.innerHTML = `<div class="box" style="text-align:center"><div style="font-size:40px">📝</div><b style="font-size:18px">Nộp bài thi?</b>
+  <p class="muted">${left ? `Còn <b style="color:var(--bad)">${left}</b>/${EX.qs.length} câu chưa làm, sẽ tính là sai.` : `Bạn đã làm đủ ${EX.qs.length} câu.`}</p>
+  <div class="row" style="flex-wrap:nowrap"><button class="btn ghost" style="flex:1" id="no">Làm tiếp</button><button class="btn pink" style="flex:1" id="yes">Nộp bài</button></div></div>`;
+  document.body.appendChild(m);
+  m.onclick = e => {
+    if (e.target.id === 'yes') { m.remove(); finishExam(); }
+    else if (e.target === m || e.target.id === 'no') m.remove();
+  };
 }
 function finishExam() {
   if (EX.done) return; EX.done = true;
+  document.querySelectorAll('.modal').forEach(x => x.remove()); // hết giờ khi đang mở hộp nào đó
   if (cleanup) { cleanup(); cleanup = null; }
   ttsStop();
   const E = EXAMS[EX.lv];

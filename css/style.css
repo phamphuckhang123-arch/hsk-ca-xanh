@@ -97,6 +97,8 @@ details.gp[open] summary::after{content:"－"}
 .star{font-weight:700;margin-top:10px;font-size:18px}
 .timer{font-variant-numeric:tabular-nums;font-weight:700;color:var(--pri-d)}
 .exambar{position:sticky;top:56px;z-index:5;background:var(--bg);padding:8px 0;display:flex;align-items:center;gap:8px}
+.exambar .sn{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.exambar .chip,.exambar>b,.exambar .timer{white-space:nowrap;flex:none}
 .foot{position:fixed;left:0;right:0;bottom:0;background:#fff;box-shadow:0 -2px 12px rgba(0,0,0,.06);padding:10px 16px;padding-bottom:max(10px,env(safe-area-inset-bottom));z-index:9}
 .foot .wrap{max-width:720px;margin:0 auto;display:flex;gap:10px}
 .foot .btn{flex:1}
