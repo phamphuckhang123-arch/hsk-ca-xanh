@@ -69,12 +69,28 @@ function ruby(text) {
   }
   return out;
 }
+// Bật/tắt pinyin: nút 拼 trên cùng và công tắc trong bài dùng chung một trạng thái.
+// Pinyin luôn được vẽ sẵn và chỉ ẩn bằng CSS (body.nopy), nên bật/tắt không làm mất vị trí đang đọc.
 let showPy = store.get('py', true);
-const zh = t => `<span class="zh">${showPy ? ruby(t) : esc(t)}</span>`;
+const zh = t => `<span class="zh">${ruby(t)}</span>`;
 const zhLines = t => t.split('\n').map(zh).join('<br>');
-function syncPyBtn() { $('#pyToggle').classList.toggle('on', showPy); }
-$('#pyToggle').onclick = () => { showPy = !showPy; store.set('py', showPy); syncPyBtn(); rerender(); };
-syncPyBtn();
+const pySwitch = () => `<div class="pybar"><div class="pyl"><b>拼 Pinyin</b><span class="muted if-py">Đang hiện toàn bộ phiên âm</span><span class="muted if-nopy">Đang ẩn · chạm vào từ hoặc câu để xem</span></div><button class="sw" data-pysw role="switch" aria-checked="${showPy}" aria-label="Hiện pinyin"><i></i></button></div>`;
+function setPy(v) {
+  showPy = v; store.set('py', v);
+  document.body.classList.toggle('nopy', !v);
+  $('#pyToggle').classList.toggle('on', v);
+  document.querySelectorAll('[data-pysw]').forEach(b => b.setAttribute('aria-checked', v));
+  document.querySelectorAll('.peek').forEach(e => e.classList.remove('peek'));
+}
+$('#pyToggle').onclick = () => { setPy(!showPy); toast(showPy ? 'Đã bật pinyin' : 'Đã tắt pinyin'); };
+document.addEventListener('click', e => {
+  if (e.target.closest('[data-pysw]')) return setPy(!showPy);
+  // Khi đang ẩn: chạm vào một từ (hoặc câu ví dụ, tên bài) để xem riêng phiên âm của nó
+  if (showPy || e.target.closest('button, a, input, textarea, select')) return;
+  const t = e.target.closest('.word, .ex .zh, h1 .zh');
+  if (t) t.classList.toggle('peek');
+});
+setPy(showPy);
 
 /* ========== Phát âm (Text-to-Speech) ========== */
 let zhVoice = null;
@@ -108,10 +124,6 @@ function speakScript(script, question) {
 
 /* ========== Router ========== */
 let cleanup = null;
-function rerender() {
-  if (EX && /\/exam\/go$/.test(location.hash)) { if (!EX.done) return drawQ(); return EX.view === 'review' ? drawReview() : showResult(); }
-  route();
-}
 window.addEventListener('hashchange', route);
 function route() {
   if (cleanup) { cleanup(); cleanup = null; }
@@ -148,7 +160,7 @@ function home() {
       <div class="bar"><i style="width:${(k / ws.length * 100).toFixed(1)}%"></i></div>
       <div class="muted">Đã thuộc ${k}/${ws.length}</div></div><span style="font-size:22px;color:var(--pri)">›</span></a>`;
   }).join('')}
-  <div class="card"><b>💡 Mẹo</b><div class="muted">Bấm nút <b>拼 Pinyin</b> trên cùng để bật/tắt phiên âm. Bấm 🔊 để nghe phát âm. Trên điện thoại, chọn “Thêm vào màn hình chính” để dùng như một ứng dụng.</div></div>
+  <div class="card"><b>💡 Mẹo</b><div class="muted">Bấm nút <b>拼 Pinyin</b> trên cùng (hoặc công tắc Pinyin trong mỗi bài) để ẩn/hiện toàn bộ phiên âm; khi đang ẩn, chạm vào một từ để xem riêng phiên âm của từ đó. Bấm 🔊 để nghe phát âm. Trên điện thoại, chọn “Thêm vào màn hình chính” để dùng như một ứng dụng.</div></div>
   ${hist.length ? `<div class="card"><b>📝 Lịch sử thi thử</b>${hist.slice(-6).reverse().map(h => `<div class="hist"><span>HSK ${h.lv} · ${new Date(h.at).toLocaleDateString('vi-VN')}</span><b style="color:${h.passed ? 'var(--ok)' : 'var(--bad)'}">${h.total}/${h.max}</b></div>`).join('')}</div>` : ''}`;
 }
 
@@ -179,7 +191,7 @@ function wordRow(x, o = {}) {
     if (x.pos) tags += `<span class="tag">${esc(posVi(x.pos))}</span>`;
     if (o.lesson && WORD_LESSON[x.id]) tags += `<span class="tag">Bài ${WORD_LESSON[x.id].n}</span>`;
   }
-  return `<div class="word"><div class="hz">${esc(x.w)}</div><div class="meta"><div class="py">${esc(x.py)} <span class="hv">${esc(x.hv || '')}</span></div><div>${esc(x.vi)} ${tags}</div></div>
+  return `<div class="word"><div class="hz">${esc(x.w)}</div><div class="meta"><div class="py"><span class="pyt">${esc(x.py)}</span> <span class="hv">${esc(x.hv || '')}</span></div><div>${esc(x.vi)} ${tags}</div></div>
   <button class="ibtn" data-say="${esc(x.w.replace(/（.*?）/g, ''))}" aria-label="Nghe">🔊</button>${x.ext ? '<span style="width:38px;flex:none"></span>' : `<button class="ibtn k ${on ? 'on' : ''}" data-k="${x.id}" aria-label="Đã thuộc">✓</button>`}</div>`;
 }
 function bindWords(root) {
@@ -212,6 +224,7 @@ function lessonView(lv, i) {
   <div class="muted">新HSK教程${lv} · Bài ${l.n}</div>
   <h1 style="margin:2px 0">${zh(l.zh)}</h1><div class="muted" style="margin-bottom:12px">${esc(l.vi)}</div>
   <div class="row" style="margin-bottom:4px"><a class="btn" href="#/l/${lv}/cards/${i}">🃏 Thẻ ghi nhớ</a><a class="btn pink" href="#/l/${lv}/quiz/hv/${i}">🎯 Kiểm tra bài</a></div>
+  ${pySwitch()}
   <h2>Từ mới (${l.words.length})</h2><div class="card wl">${l.words.map(x => wordRow(x, { b: lv })).join('')}</div>
   ${l.sup.length ? `<h2>Từ bổ sung theo đề cương (${l.sup.length})</h2><p class="muted" style="margin-top:-6px">Có trong đề cương HSK ${lv} nhưng không nằm trong danh sách từ mới của sách, được xếp vào bài có chủ đề gần nhất.</p><div class="card wl">${l.sup.map(x => wordRow(x, { b: lv })).join('')}</div>` : ''}
   ${l.ext.length ? `<h2>Từ mở rộng · tên riêng (${l.ext.length})</h2><p class="muted" style="margin-top:-6px">Có trong bài của sách nhưng không thuộc đề cương thi HSK 1–3.</p><div class="card wl">${l.ext.map(x => wordRow(x)).join('')}</div>` : ''}
@@ -271,6 +284,7 @@ function grammarView(lv, only) {
   }).join('');
   app.innerHTML = `${back(only != null ? `#/l/${lv}/vocab/${only}` : `#/l/${lv}`, only != null ? 'Về bài học' : 'HSK ' + lv)}<h1>Ngữ pháp HSK ${lv}</h1>
   <p class="muted" style="margin-top:-6px">${total} điểm ngữ pháp theo từng bài của giáo trình 《新HSK教程${lv}》, đối chiếu Đề cương thi HSK 2025.</p>
+  ${pySwitch()}
   <div id="gl">${list}</div>
   <a class="btn block" href="#/l/${lv}/exam">📝 Làm đề thi thử HSK ${lv}</a>`;
   app.onclick = e => {
