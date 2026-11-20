@@ -157,3 +157,16 @@ body.nopy .if-py,body:not(.nopy) .if-nopy{display:none}
 body.nopy .zh:not(.peek) rt{display:none}
 body.nopy .word:not(.peek) .pyt{color:transparent;background:var(--pri-s);border-radius:6px}
 body.nopy .word,body.nopy .ex .zh,body.nopy h1 .zh{cursor:pointer}
+/* Giọng đọc */
+.top .tools{display:flex;gap:8px;align-items:center}
+.fld{display:block;margin-top:14px;font-weight:600}
+.fld .muted{font-weight:400}
+.fld select{display:block;width:100%;margin-top:6px;padding:10px;border-radius:12px;border:2px solid var(--line);font:inherit;font-weight:400;background:#fff;color:var(--text)}
+.seg{display:flex;gap:6px;margin-top:6px}
+.seg button{flex:1;padding:9px 0;border-radius:12px;border:2px solid var(--line);background:#fff;font-weight:600}
+.seg button.on{background:var(--pri);border-color:var(--pri);color:#fff}
+.tips{margin-top:14px;background:var(--cream);border-radius:12px;padding:10px 12px;font-size:14px}
+.tips summary{font-weight:700;cursor:pointer}
+.tips ul{margin:8px 0 0;padding-left:18px}
+.tips li{margin-bottom:6px}
+.warnbox{background:var(--pink-s);border-radius:12px;padding:10px 12px}

@@ -92,42 +92,138 @@ document.addEventListener('click', e => {
 });
 setPy(showPy);
 
-/* ========== Phát âm (Text-to-Speech) ========== */
-let zhVoice = null;
-function loadVoices() {
-  if (!('speechSynthesis' in window)) return;
-  const vs = speechSynthesis.getVoices();
-  zhVoice = vs.find(v => /zh[-_]CN/i.test(v.lang)) || vs.find(v => /^zh/i.test(v.lang) || /chinese|mandarin/i.test(v.name)) || null;
+/* ========== Phát âm (giọng đọc có sẵn trên máy – Web Speech API) ========== */
+// Tự chọn giọng tiếng Phổ thông tự nhiên nhất mà máy có; hội thoại dùng giọng nam/nữ thật nếu máy có,
+// đọc từng lượt và nghỉ giữa các lượt nói. Đổi giọng, tốc độ trong bảng 🔊 trên cùng.
+const HAS_TTS = 'speechSynthesis' in window;
+const TTS = { voices: [], main: null, male: null, female: null, gen: 0, timer: 0, cur: null };
+const ttsCfg = Object.assign({ main: '', male: '', rate: 0.9 }, store.get('tts', {}));
+const NOVELTY = /\b(Eddy|Flo|Grandma|Grandpa|Reed|Rocko|Sandy|Shelley|Albert|Bahh|Bells|Boing|Bubbles|Cellos|Jester|Organ|Superstar|Trinoids|Whisper|Wobble|Zarvox|Fred|Junior|Kathy|Ralph)\b|Good News|Bad News/i;
+const isMale = v => /Yunxi|Yunyang|Yunjian|Yunxia|Yunfeng|Yunhao|Yunye|Yunze|YunJhe|Kangkang|Li-?mu/i.test(v.name);
+const isFemale = v => /Xiao[a-z]|Hsiao|Huihui|Yaoyao|Ting-?Ting|Lili|Yu-?shu|Mei-?Jia|Google/i.test(v.name);
+const voiceId = v => v.voiceURI || v.name;
+const voiceLabel = v => v.name.replace(/^Microsoft\s+/, '').replace(/\s+-\s+.*$/, '');
+function vScore(v) {
+  const l = v.lang.replace(/_/g, '-').toLowerCase(), n = v.name;
+  if (!/^(zh|cmn)(-|$)/.test(l) || /-(hk|mo)\b|yue/.test(l) || /cantonese|粤|粵/i.test(n)) return -1; // chỉ lấy tiếng Phổ thông
+  let s = /^(zh|cmn)(-(cn|hans|sg)\b|$)/.test(l) ? 100 : 60;   // giọng Đại lục trước, Đài Loan sau
+  if (/^zh-cn-[a-z]/.test(l)) s -= 50;                           // giọng phương ngữ (Liêu Ninh, Thiểm Tây…)
+  if (/natural|neural|online/i.test(n)) s += 50;                 // giọng AI tự nhiên (Edge)
+  if (/premium/i.test(n)) s += 45; else if (/enhanced/i.test(n)) s += 40; // giọng tải thêm (iPhone, Mac)
+  if (/google/i.test(n)) s += 30;
+  if (NOVELTY.test(n)) s -= 80;                                   // giọng hiệu ứng vui của Apple
+  if (/Yunxia|Yunjian/i.test(n)) s -= 10;                         // giọng trẻ con, bình luận thể thao
+  if (/Xiaoxiao|Yunxi\b/i.test(n)) s += 3;
+  return s;
 }
-if ('speechSynthesis' in window) { loadVoices(); speechSynthesis.onvoiceschanged = loadVoices; }
-function utter(text, pitch = 1, rate = 0.85) {
-  const u = new SpeechSynthesisUtterance(text);
-  u.lang = 'zh-CN'; if (zhVoice) u.voice = zhVoice; u.rate = rate; u.pitch = pitch;
-  return u;
+function pickVoices() {
+  if (!HAS_TTS) return;
+  const vs = speechSynthesis.getVoices().filter(v => vScore(v) >= 0).sort((a, b) => vScore(b) - vScore(a));
+  const find = id => (id && vs.find(v => voiceId(v) === id)) || null;
+  TTS.voices = vs;
+  TTS.main = find(ttsCfg.main) || vs.find(v => !isMale(v)) || vs[0] || null;
+  TTS.male = ttsCfg.male === 'none' ? null : find(ttsCfg.male) || vs.find(v => isMale(v) && v !== TTS.main) || null;
+  TTS.female = TTS.main && isMale(TTS.main) ? vs.find(isFemale) || null : TTS.main;
 }
-function speak(text, rate) {
-  if (!('speechSynthesis' in window)) { toast('Trình duyệt không hỗ trợ đọc giọng nói'); return; }
-  speechSynthesis.cancel(); speechSynthesis.speak(utter(text, 1, rate));
+if (HAS_TTS) { pickVoices(); speechSynthesis.onvoiceschanged = pickVoices; }
+// Giọng cho từng vai: ưu tiên giọng nam/nữ thật; máy chỉ có một giọng thì đổi nhẹ cao độ
+function roleVoice(role) {
+  const F = TTS.main;
+  if (role === '男') return TTS.male && TTS.male !== F ? { v: TTS.male, p: 1 } : { v: F, p: F && isMale(F) ? 1 : 0.8 };
+  if (role === '女') return TTS.female ? { v: TTS.female, p: 1 } : { v: F, p: 1.2 };
+  return { v: F, p: 1 };
 }
-// Đọc kịch bản có vai 男/女 với cao độ khác nhau
+// Câu dài chia theo dấu câu (≤ 60 chữ mỗi đoạn) để máy không bị ngắt giữa chừng
+function chunks(t) {
+  const out = []; let cur = '';
+  (t.match(/[^。！？!?]+[。！？!?]*/g) || [t]).forEach(s => { if (cur && (cur + s).length > 60) { out.push(cur); cur = s; } else cur += s; });
+  if (cur.trim()) out.push(cur);
+  return out;
+}
+function ttsStop() { TTS.gen++; clearTimeout(TTS.timer); if (HAS_TTS) speechSynthesis.cancel(); }
+// Đọc lần lượt từng đoạn {t: chữ, v: giọng, p: cao độ, r: tốc độ, gap: ms nghỉ sau đoạn}
+function ttsPlay(items) {
+  if (!HAS_TTS) { toast('Trình duyệt không hỗ trợ đọc giọng nói'); return; }
+  if (!TTS.voices.length) pickVoices();
+  ttsStop(); const gen = TTS.gen;
+  const next = () => {
+    const it = items.shift(); if (!it || gen !== TTS.gen) return;
+    const u = new SpeechSynthesisUtterance(it.t);
+    u.lang = it.v ? it.v.lang : 'zh-CN'; if (it.v) u.voice = it.v;
+    u.rate = it.r || ttsCfg.rate; u.pitch = it.p || 1;
+    let done = false, wd = 0;
+    const fin = () => { if (done) return; done = true; clearTimeout(wd); if (gen === TTS.gen) TTS.timer = setTimeout(next, it.gap || 0); };
+    wd = setTimeout(fin, 3000 + [...it.t].length * 600 / u.rate); // phòng khi máy không báo đã đọc xong
+    u.onend = fin; u.onerror = fin;
+    TTS.cur = u; // giữ tham chiếu để Chrome không bỏ dở câu đang đọc
+    if (speechSynthesis.paused) speechSynthesis.resume();
+    speechSynthesis.speak(u);
+  };
+  next();
+}
+function speak(text, rate) { ttsPlay(chunks(text).map(t => ({ t, v: TTS.main, r: rate, gap: 250 }))); }
+// Bài nghe: vai 男/女 đọc bằng giọng khác nhau, nghỉ khi đổi lượt và trước câu hỏi như đề thật
 function speakScript(script, question) {
-  if (!('speechSynthesis' in window)) { toast('Trình duyệt không hỗ trợ đọc giọng nói'); return; }
-  speechSynthesis.cancel();
-  const lines = script.split('\n');
-  if (question) lines.push('问：' + question);
-  lines.forEach(l => {
-    const m = l.match(/^(男|女)：(.*)$/);
-    if (m) speechSynthesis.speak(utter(m[2], m[1] === '男' ? 0.7 : 1.3));
-    else speechSynthesis.speak(utter(l, 1));
+  const items = [];
+  script.split('\n').forEach(l => {
+    const m = l.match(/^(男|女)：(.*)$/), t = (m ? m[2] : l).trim(); if (!t) return;
+    const r = roleVoice(m ? m[1] : '');
+    chunks(t).forEach(c => items.push({ t: c, v: r.v, p: r.p, gap: 250 }));
+    items[items.length - 1].gap = 650;
   });
+  if (question) { if (items.length) items[items.length - 1].gap = 900; items.push({ t: '问：' + question, v: TTS.main }); }
+  ttsPlay(items);
 }
+// Chữ đa âm đứng một mình: máy hay đọc theo âm thường gặp, nên đọc bằng chữ đồng âm để đúng âm của từ
+const SAY_FIX = { '还|hái': '孩', '还|huán': '环', '只|zhī': '知', '只|zhǐ': '纸', '长|cháng': '常', '长|zhǎng': '掌', '地|de': '的', '得|de': '的', '为|wèi': '位', '干|gàn': '赣', '差|chà': '岔', '种|zhǒng': '肿', '教|jiāo': '交', '角|jiǎo': '脚', '行|xíng': '形' };
+const sayText = x => SAY_FIX[x.w + '|' + x.py] || x.w.replace(/（.*?）/g, '');
+
+/* Bảng chọn giọng đọc (nút 🔊 trên cùng) */
+const SAMPLE_SAY = '你好，我们一起学习汉语吧。';
+function ttsSheet() {
+  pickVoices();
+  const vs = TTS.voices;
+  const opt = (v, sel) => `<option value="${esc(voiceId(v))}" ${v === sel ? 'selected' : ''}>${esc(voiceLabel(v))}${isMale(v) ? ' · nam' : isFemale(v) ? ' · nữ' : ''}${v.localService ? '' : ' · cần mạng'}</option>`;
+  const m = document.createElement('div'); m.className = 'modal';
+  m.innerHTML = `<div class="box">
+  <div class="row"><b style="font-size:18px">🔊 Giọng đọc</b><span class="spacer"></span><button class="chip" id="cl" style="background:var(--pri-s);color:var(--pri-d)">Đóng</button></div>
+  ${!HAS_TTS ? '<p class="warnbox">Trình duyệt này không đọc được giọng nói. Hãy mở trang bằng Chrome, Edge hoặc Safari.</p>'
+    : !vs.length ? '<p class="warnbox">⚠️ Máy chưa có giọng đọc tiếng Trung. Xem cách cài ở dưới rồi mở lại trang.</p>'
+    : `<label class="fld">Giọng chính <span class="muted">— đọc từ, câu ví dụ, vai nữ</span><select id="vMain">${vs.map(v => opt(v, TTS.main)).join('')}</select></label>
+  <label class="fld">Giọng vai nam <span class="muted">— trong bài nghe hội thoại</span><select id="vMale"><option value="none" ${TTS.male ? '' : 'selected'}>Không có · hạ tông giọng chính</option>${vs.map(v => opt(v, TTS.male)).join('')}</select></label>
+  <div class="fld">Tốc độ đọc<div class="seg">${[[0.7, 'Chậm'], [0.9, 'Vừa'], [1, 'Tự nhiên']].map(([r, t]) => `<button data-r="${r}" class="${ttsCfg.rate === r ? 'on' : ''}">${t}</button>`).join('')}</div></div>
+  <button class="btn block" id="vTest" style="margin-top:16px">▶ Nghe thử hội thoại</button>`}
+  <details class="tips"><summary>Cách có giọng đọc hay hơn</summary><ul>
+    <li><b>iPhone, iPad:</b> Cài đặt → Trợ năng → Nội dung được đọc → Giọng nói → Tiếng Trung → tải giọng có chữ “Nâng cao” hoặc “Cao cấp” (Tingting, Lili, Yu-shu…), rồi mở lại trang và chọn giọng đó ở trên.</li>
+    <li><b>Android:</b> Cài đặt → tìm “Chuyển văn bản thành giọng nói” → chọn Dịch vụ giọng nói của Google → tải dữ liệu giọng Tiếng Trung (Trung Quốc).</li>
+    <li><b>Máy tính:</b> mở trang bằng Microsoft Edge để có giọng AI rất tự nhiên (Xiaoxiao nữ, Yunxi nam).</li>
+  </ul></details></div>`;
+  document.body.appendChild(m);
+  const save = () => { store.set('tts', ttsCfg); pickVoices(); };
+  m.onclick = e => {
+    if (e.target === m || e.target.id === 'cl') { ttsStop(); m.remove(); return; }
+    const r = e.target.closest('[data-r]');
+    if (r) { ttsCfg.rate = +r.dataset.r; save(); m.querySelectorAll('[data-r]').forEach(b => b.classList.toggle('on', b === r)); speak(SAMPLE_SAY); }
+    if (e.target.id === 'vTest') speakScript('女：你好！你是哪国人？\n男：我是越南人，我在学习汉语。\n女：你的汉语说得很好！');
+  };
+  m.onchange = e => {
+    if (e.target.id === 'vMain') { ttsCfg.main = e.target.value; save(); speak(SAMPLE_SAY); }
+    if (e.target.id === 'vMale') { ttsCfg.male = e.target.value; save(); speakScript('男：你好，我们一起学习汉语吧。'); }
+  };
+}
+// Máy còn giữ index.html cũ (chưa có nút 🔊) thì tự thêm nút, tránh lỗi trắng trang
+if (!$('#ttsBtn')) {
+  const py = $('#pyToggle'), w = document.createElement('div'); w.className = 'tools';
+  py.replaceWith(w); w.innerHTML = '<button id="ttsBtn" class="chip" title="Giọng đọc" aria-label="Chọn giọng đọc">🔊</button>'; w.appendChild(py);
+}
+$('#ttsBtn').onclick = ttsSheet;
 
 /* ========== Router ========== */
 let cleanup = null;
 window.addEventListener('hashchange', route);
 function route() {
   if (cleanup) { cleanup(); cleanup = null; }
-  if ('speechSynthesis' in window) speechSynthesis.cancel();
+  ttsStop();
   const foot = $('.foot'); if (foot) foot.remove();
   const p = location.hash.replace(/^#\/?/, '').split('/').filter(Boolean);
   window.scrollTo(0, 0);
@@ -160,7 +256,7 @@ function home() {
       <div class="bar"><i style="width:${(k / ws.length * 100).toFixed(1)}%"></i></div>
       <div class="muted">Đã thuộc ${k}/${ws.length}</div></div><span style="font-size:22px;color:var(--pri)">›</span></a>`;
   }).join('')}
-  <div class="card"><b>💡 Mẹo</b><div class="muted">Bấm nút <b>拼 Pinyin</b> trên cùng (hoặc công tắc Pinyin trong mỗi bài) để ẩn/hiện toàn bộ phiên âm; khi đang ẩn, chạm vào một từ để xem riêng phiên âm của từ đó. Bấm 🔊 để nghe phát âm. Trên điện thoại, chọn “Thêm vào màn hình chính” để dùng như một ứng dụng.</div></div>
+  <div class="card"><b>💡 Mẹo</b><div class="muted">Bấm nút <b>拼 Pinyin</b> trên cùng (hoặc công tắc Pinyin trong mỗi bài) để ẩn/hiện toàn bộ phiên âm; khi đang ẩn, chạm vào một từ để xem riêng phiên âm của từ đó. Bấm 🔊 cạnh mỗi từ để nghe; bấm 🔊 trên cùng để chọn giọng đọc và tốc độ. Trên điện thoại, chọn “Thêm vào màn hình chính” để dùng như một ứng dụng.</div></div>
   ${hist.length ? `<div class="card"><b>📝 Lịch sử thi thử</b>${hist.slice(-6).reverse().map(h => `<div class="hist"><span>HSK ${h.lv} · ${new Date(h.at).toLocaleDateString('vi-VN')}</span><b style="color:${h.passed ? 'var(--ok)' : 'var(--bad)'}">${h.total}/${h.max}</b></div>`).join('')}</div>` : ''}`;
 }
 
@@ -192,7 +288,7 @@ function wordRow(x, o = {}) {
     if (o.lesson && WORD_LESSON[x.id]) tags += `<span class="tag">Bài ${WORD_LESSON[x.id].n}</span>`;
   }
   return `<div class="word"><div class="hz">${esc(x.w)}</div><div class="meta"><div class="py"><span class="pyt">${esc(x.py)}</span> <span class="hv">${esc(x.hv || '')}</span></div><div>${esc(x.vi)} ${tags}</div></div>
-  <button class="ibtn" data-say="${esc(x.w.replace(/（.*?）/g, ''))}" aria-label="Nghe">🔊</button>${x.ext ? '<span style="width:38px;flex:none"></span>' : `<button class="ibtn k ${on ? 'on' : ''}" data-k="${x.id}" aria-label="Đã thuộc">✓</button>`}</div>`;
+  <button class="ibtn" data-say="${esc(sayText(x))}" aria-label="Nghe">🔊</button>${x.ext ? '<span style="width:38px;flex:none"></span>' : `<button class="ibtn k ${on ? 'on' : ''}" data-k="${x.id}" aria-label="Đã thuộc">✓</button>`}</div>`;
 }
 function bindWords(root) {
   root.onclick = e => {
@@ -260,10 +356,10 @@ function flashcards(lv, which) {
     ft.innerHTML = `<div class="wrap"><button class="btn ghost" id="no">✗ Chưa thuộc</button><button class="btn" id="yes">✓ Đã thuộc</button></div>`;
     document.body.appendChild(ft);
     $('#fc').onclick = () => { $('#fc').classList.toggle('flip'); };
-    $('#say').onclick = () => speak(x.w);
+    $('#say').onclick = () => speak(sayText(x));
     $('#no').onclick = () => { known.delete(wkey(x)); saveKnown(); i++; ft.remove(); draw(); };
     $('#yes').onclick = () => { known.add(wkey(x)); saveKnown(); got++; i++; ft.remove(); draw(); };
-    speak(x.w);
+    speak(sayText(x));
   };
   draw();
 }
@@ -345,7 +441,7 @@ function quiz(lv, mode, scope) {
     <div class="row"><b>${MODES[mode][0]}</b><span class="spacer"></span><span class="muted">${i + 1}/${qs.length} · Đúng ${score}</span></div>
     <div class="bar"><i style="width:${i / qs.length * 100}%"></i></div>
     <div class="card" style="margin-top:12px">${prompt}<div class="opts">${opts.map((o, k) => `<button class="opt" data-i="${k}"><span class="l">${L[k]}</span><span>${esc(o[field])}</span></button>`).join('')}</div><div id="fb"></div></div>`;
-    if (mode === 'ls') { $('#play').onclick = () => speak(x.w); speak(x.w); }
+    if (mode === 'ls') { $('#play').onclick = () => speak(sayText(x)); speak(sayText(x)); }
     let answered = false;
     app.querySelectorAll('.opt').forEach(b => b.onclick = () => {
       if (answered) return; answered = true;
@@ -354,7 +450,7 @@ function quiz(lv, mode, scope) {
       if (k === ans) score++; else { b.classList.add('bad'); wrong.push(x); }
       $('#fb').innerHTML = `<div class="explain"><b style="font-size:20px">${esc(x.w)}</b> · ${esc(x.py)} · <span style="text-transform:capitalize">${esc(x.hv)}</span><br>${esc(x.vi)}</div>
       <button class="btn block" id="nx" style="margin-top:12px">${i + 1 < qs.length ? 'Câu tiếp ›' : 'Xem kết quả'}</button>`;
-      if (mode !== 'ls') speak(x.w);
+      if (mode !== 'ls') speak(sayText(x));
       $('#nx').onclick = () => { i++; draw(); };
     });
   };
@@ -411,9 +507,9 @@ function examIntro(lv) {
   app.innerHTML = `${back(`#/l/${lv}`, 'HSK ' + lv)}<h1>Thi thử HSK ${lv}</h1>
   <div class="card"><div class="row"><span>📝 <b>${qCount(lv)} câu</b></span><span>⏱️ Làm bài: <b>${E.time} phút</b></span></div>
   <p class="muted">Theo cấu trúc đề HSK mới (công bố 12/2025, áp dụng từ 7/2026). Tổng thời gian thi chính thức khoảng ${E.official} phút, gồm cả thời gian điền thông tin.</p>
-  <p class="muted">Đề được trộn ngẫu nhiên mỗi lần làm. Phần nghe đọc bằng giọng máy (cần bật âm lượng), mỗi bài nghe được nghe tối đa 2 lần.</p></div>
+  <p class="muted">Đề được trộn ngẫu nhiên mỗi lần làm. Phần nghe đọc bằng giọng máy (cần bật âm lượng), mỗi bài nghe được nghe tối đa 2 lần. Bấm 🔊 trên cùng để chọn giọng đọc và tốc độ.</p></div>
   ${E.sections.map(s => `<div class="card"><b>${esc(s.name)}</b> <span class="muted">(${s.parts.reduce((n, p) => n + p.n, 0)} câu · ${s.time} phút)</span><ul style="margin:6px 0 0;padding-left:20px">${s.parts.map(p => `<li>${esc(p.t)} <span class="muted">— ${p.n} câu</span></li>`).join('')}</ul></div>`).join('')}
-  ${!zhVoice && 'speechSynthesis' in window ? '<div class="card" style="background:var(--pink-s)">⚠️ Chưa tìm thấy giọng đọc tiếng Trung trên thiết bị. Nếu không nghe được, hãy cài giọng “Tiếng Trung (Trung Quốc)” trong cài đặt Chuyển văn bản thành giọng nói, hoặc dùng nút “Xem lời thoại”.</div>' : ''}
+  ${HAS_TTS && !TTS.voices.length ? '<div class="card" style="background:var(--pink-s)">⚠️ Chưa tìm thấy giọng đọc tiếng Trung trên thiết bị. Bấm 🔊 trên cùng để xem cách cài, hoặc dùng nút “Xem lời thoại”.</div>' : ''}
   <a class="btn block pink" href="#/l/${lv}/exam/go">Bắt đầu làm bài</a>`;
 }
 
@@ -427,7 +523,7 @@ function examRun(lv) {
     if (left <= 0 && !EX.done) { toast('Hết giờ! Bài thi đã được nộp.'); finishExam(); }
   };
   const timer = setInterval(tick, 1000);
-  cleanup = () => clearInterval(timer);
+  cleanup = () => { clearInterval(timer); clearTimeout(EX && EX.auto); };
   drawQ(); tick();
 }
 const makeOk = (q, a) => { const s = (a || '').trim(); const n = (s.match(/[㐀-鿿]/g) || []).length; return s.includes(q.word) && n >= [...q.word].length + 3 && /[。！？!?.]$/.test(s); };
@@ -483,6 +579,7 @@ function drawQ() {
   $('#tm').textContent = `${String(Math.max(0, left) / 60 | 0).padStart(2, '0')}:${String(Math.max(0, left) % 60).padStart(2, '0')}`;
 }
 function bindQ(q, idx, review) {
+  clearTimeout(EX.auto); // bỏ lượt tự phát của câu vừa rời, tránh tính thừa lượt nghe
   if (q.audio) {
     const pc = () => { const p = $('#plays'); if (p && !review) p.textContent = `Đã nghe ${EX.plays[idx] || 0}/2 lần`; };
     const play = () => {
@@ -490,7 +587,7 @@ function bindQ(q, idx, review) {
       speakScript(q.audio, q.question);
     };
     $('#play').onclick = play; pc();
-    if (!review && !EX.plays[idx]) setTimeout(play, 300);
+    if (!review && !EX.plays[idx]) EX.auto = setTimeout(play, 300); // tự phát một lần khi mở câu
     if ($('#scr')) $('#scr').onclick = () => { $('#scrbox').innerHTML = `<div class="explain zhs">${zhLines(q.audio)}</div>`; $('#scr').remove(); };
   }
   if (review) return;
@@ -512,7 +609,7 @@ function navModal(review) {
 function finishExam() {
   if (EX.done) return; EX.done = true;
   if (cleanup) { cleanup(); cleanup = null; }
-  if ('speechSynthesis' in window) speechSynthesis.cancel();
+  ttsStop();
   const E = EXAMS[EX.lv];
   const secs = E.sections.map((s, si) => { const qs = EX.qs.map((q, i) => [q, i]).filter(([q]) => q.si === si); const c = qs.filter(([q, i]) => isRight(q, EX.ans[i])).length; return { name: s.name, c, n: qs.length, sc: qs.length ? Math.round(c / qs.length * 100) : 0 }; });
   const total = secs.reduce((a, s) => a + s.sc, 0), max = secs.length * 100, passed = total >= max * 0.6;
