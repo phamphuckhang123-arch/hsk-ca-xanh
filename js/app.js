@@ -12,13 +12,25 @@ const store = {
 };
 function toast(msg) { const t = document.createElement('div'); t.className = 'toast'; t.textContent = msg; document.body.appendChild(t); setTimeout(() => t.remove(), 2200); }
 
-/* ========== Dữ liệu từ vựng ========== */
-const WORDS = VOCAB.map((r, i) => ({ id: i, lv: r[0], w: r[1], py: r[2], vi: r[3], hv: r[4] }));
+/* ========== Dữ liệu: từ vựng (Đề cương thi HSK 2025) & bài học (giáo trình 《新HSK教程》) ========== */
+const isHan = c => /[㐀-鿿]/.test(c);
+const WORDS = VOCAB.map((r, i) => ({ id: i, lv: r[0], w: r[1], py: r[2], syl: r[3], pos: r[4], vi: r[5], hv: r[6] }));
 const LV_WORDS = { 1: [], 2: [], 3: [] };
 WORDS.forEach(x => LV_WORDS[x.lv].push(x));
-const PER = 20;
-const lessonsOf = lv => { const ws = LV_WORDS[lv], out = []; for (let i = 0; i < ws.length; i += PER) out.push(ws.slice(i, i + PER)); return out; };
-const LESSONS = { 1: lessonsOf(1), 2: lessonsOf(2), 3: lessonsOf(3) };
+const LESSONS = {}, WORD_LESSON = {};
+[1, 2, 3].forEach(b => {
+  LESSONS[b] = BOOKS[b].map(l => {
+    const words = l.w.map(i => WORDS[i]), sup = l.s.map(i => WORDS[i]);
+    const ext = l.x.map(r => ({ w: r[0], py: r[1], syl: r[2], vi: r[3], hv: r[4], ext: true }));
+    return { n: l.n, zh: l.zh, vi: l.vi, g: l.g, words, sup, ext, all: words.concat(sup) };
+  });
+});
+[1, 2, 3].forEach(b => LESSONS[b].forEach(l => l.all.forEach(x => {
+  const cur = WORD_LESSON[x.id];
+  if (!cur || (cur.b !== x.lv && b === x.lv)) WORD_LESSON[x.id] = { b, n: l.n };
+})));
+const POSVI = { 名: 'danh từ', 动: 'động từ', 形: 'tính từ', 副: 'phó từ', 代: 'đại từ', 数: 'số từ', 量: 'lượng từ', 助: 'trợ từ', 介: 'giới từ', 连: 'liên từ', 叹: 'thán từ', 前缀: 'tiền tố', 后缀: 'hậu tố', 拟声: 'tượng thanh' };
+const posVi = p => (p || '').replace(/（[^）]*）/g, '').split('、').map(s => POSVI[s.trim()] || '').filter(Boolean).join(', ');
 const wkey = x => x.w + '|' + x.py;
 let known = new Set(store.get('known', []));
 const saveKnown = () => store.set('known', [...known]);
@@ -26,16 +38,19 @@ const knownCount = ws => ws.reduce((n, x) => n + (known.has(wkey(x)) ? 1 : 0), 0
 
 /* ========== Pinyin tự động (ruby) ========== */
 const PYW = {}, PYC = {};
-WORDS.forEach(x => {
-  const p = x.py.toLowerCase();
-  if (!PYW[x.w]) PYW[x.w] = p;
-  const ch = [...x.w], sy = p.split(/\s+/);
+const ALLW = WORDS.concat(...[1, 2, 3].map(b => LESSONS[b].flatMap(l => l.ext)));
+ALLW.forEach(x => {
+  const s = (x.syl || '').toLowerCase(); if (!s) return;
+  const ch = [...x.w].filter(isHan), sy = s.split(' ');
+  if (ch.length === 1) { if (!PYC[ch[0]]) PYC[ch[0]] = sy[0]; return; }
+  if (ch.length === [...x.w].length && !PYW[x.w]) PYW[x.w] = s;
+});
+ALLW.forEach(x => {
+  const ch = [...x.w].filter(isHan), sy = (x.syl || '').toLowerCase().split(' ');
   if (ch.length > 1 && ch.length === sy.length) ch.forEach((c, i) => { if (!PYC[c]) PYC[c] = sy[i]; });
 });
-WORDS.forEach(x => { if ([...x.w].length === 1) PYC[x.w] = x.py.toLowerCase(); }); // chữ đơn có ưu tiên cao hơn
-Object.assign(PYC, { 了: 'le', 的: 'de', 得: 'de', 地: 'de', 着: 'zhe', 过: 'guo', 吗: 'ma', 呢: 'ne', 吧: 'ba', 么: 'me', 们: 'men', 个: 'gè', 一: 'yī', 不: 'bù', 都: 'dōu', 还: 'hái', 子: 'zi', 和: 'hé', 么: 'me', 啊: 'a', 长: 'cháng', 行: 'xíng', 觉: 'jué', 中: 'zhōng', 好: 'hǎo', 为: 'wèi', 要: 'yào', 会: 'huì', 便: 'biàn', 只: 'zhǐ', 数: 'shù', 乐: 'lè', 头: 'tóu', 里: 'lǐ', 上: 'shàng', 下: 'xià', 儿: 'ér', 男: 'nán', 女: 'nǚ', 问: 'wèn' });
-Object.assign(PYW, { 什么: 'shén me', 怎么: 'zěn me', 这么: 'zhè me', 那么: 'nà me', 一点儿: 'yì diǎnr', 哪儿: 'nǎr', 这儿: 'zhèr', 那儿: 'nàr', 觉得: 'jué de', 睡觉: 'shuì jiào', 音乐: 'yīn yuè', 银行: 'yín háng', 便宜: 'pián yi', 长大: 'zhǎng dà', 还给: 'huán gěi', 还是: 'hái shi', 头发: 'tóu fa', 东西: 'dōng xi', 朋友: 'péng you', 时候: 'shí hou' });
-const isHan = c => /[㐀-鿿]/.test(c);
+Object.assign(PYC, { 了: 'le', 的: 'de', 得: 'de', 地: 'de', 着: 'zhe', 过: 'guo', 吗: 'ma', 呢: 'ne', 吧: 'ba', 么: 'me', 们: 'men', 个: 'gè', 一: 'yī', 不: 'bù', 都: 'dōu', 还: 'hái', 子: 'zi', 和: 'hé', 啊: 'a', 长: 'cháng', 只: 'zhǐ', 会: 'huì', 要: 'yào', 为: 'wèi', 中: 'zhōng', 好: 'hǎo', 里: 'lǐ', 上: 'shàng', 下: 'xià', 儿: 'ér', 男: 'nán', 女: 'nǚ', 问: 'wèn', 行: 'xíng', 看: 'kàn', 教: 'jiāo', 少: 'shǎo', 差: 'chà', 发: 'fā', 重: 'zhòng', 种: 'zhǒng', 空: 'kōng', 分: 'fēn', 正: 'zhèng', 难: 'nán', 便: 'biàn' });
+Object.assign(PYW, { 一只: 'yì zhī', 两只: 'liǎng zhī', 这只: 'zhè zhī', 那只: 'nà zhī', 几只: 'jǐ zhī', 长得: 'zhǎng de', 长大: 'zhǎng dà', 还给: 'huán gěi', 还书: 'huán shū', 地上: 'dì shang', 一个: 'yí gè', 不是: 'bú shì', 不去: 'bú qù', 不会: 'bú huì' });
 function ruby(text) {
   const ch = [...text]; let out = '', i = 0;
   while (i < ch.length) {
@@ -111,7 +126,7 @@ function route() {
     if (!v) return levelHub(lv);
     if (v === 'vocab') return p[3] != null ? lessonView(lv, +p[3]) : vocabList(lv);
     if (v === 'cards') return flashcards(lv, p[3]);
-    if (v === 'grammar') return grammarView(lv);
+    if (v === 'grammar') return grammarView(lv, p[3]);
     if (v === 'practice') return practiceMenu(lv);
     if (v === 'quiz') return quiz(lv, p[3], p[4]);
     if (v === 'exam') return p[3] === 'go' ? examRun(lv) : examIntro(lv);
@@ -125,7 +140,7 @@ const back = (href, label) => `<a class="back" href="${href}">‹ ${label}</a>`;
 function home() {
   const hist = store.get('exams', []);
   app.innerHTML = `
-  <div class="hero"><div class="bub">🫧</div><h1>Học HSK 1 · 2 · 3</h1><p>Bộ từ vựng HSK 3.0 mới · ngữ pháp · luyện tập · thi thử sát đề thật</p></div>
+  <div class="hero"><div class="bub">🫧</div><h1>Học HSK 1 · 2 · 3</h1><p>Từ vựng theo Đề cương HSK 2025 · bài học theo giáo trình 《新HSK教程》 · luyện tập · thi thử</p></div>
   ${[1, 2, 3].map(lv => {
     const ws = LV_WORDS[lv], k = knownCount(ws), best = Math.max(0, ...hist.filter(h => h.lv === lv).map(h => h.total));
     return `<a class="lvcard" href="#/l/${lv}"><div class="lvbadge">${lv}</div><div class="info"><b>HSK ${lv}</b>
@@ -144,7 +159,7 @@ function levelHub(lv) {
     lv === 1 ? ['#/l/1/pron', '🗣️', 'Phát âm', 'Thanh điệu, thanh mẫu, vận mẫu'] : null,
     [`#/l/${lv}/vocab`, '📚', 'Từ vựng', `${ws.length} từ · ${LESSONS[lv].length} bài`],
     [`#/l/${lv}/cards/all`, '🃏', 'Thẻ ghi nhớ', 'Lật thẻ ôn từ chưa thuộc'],
-    [`#/l/${lv}/grammar`, '🧩', 'Ngữ pháp', `${GRAMMAR[lv].length} điểm ngữ pháp`],
+    [`#/l/${lv}/grammar`, '🧩', 'Ngữ pháp', `${LESSONS[lv].reduce((n, l) => n + l.g.length, 0)} điểm theo bài`],
     [`#/l/${lv}/practice`, '🎯', 'Luyện tập', 'Trắc nghiệm nhanh 4 dạng'],
     [`#/l/${lv}/exam`, '📝', 'Thi thử', `${EXAMS[lv].sections.reduce((n, s) => n + s.parts.reduce((m, p) => m + p.n, 0), 0)} câu · ${EXAMS[lv].time} phút`],
   ].filter(Boolean);
@@ -155,10 +170,17 @@ function levelHub(lv) {
 }
 
 /* ========== Từ vựng ========== */
-function wordRow(x) {
-  const on = known.has(wkey(x));
-  return `<div class="word"><div class="hz">${esc(x.w)}</div><div class="meta"><div class="py">${esc(x.py)} <span class="hv">${esc(x.hv)}</span></div><div>${esc(x.vi)}</div></div>
-  <button class="ibtn" data-say="${esc(x.w)}" aria-label="Nghe">🔊</button><button class="ibtn k ${on ? 'on' : ''}" data-k="${x.id}" aria-label="Đã thuộc">✓</button></div>`;
+function wordRow(x, o = {}) {
+  const on = !x.ext && known.has(wkey(x));
+  let tags = '';
+  if (x.ext) tags += '<span class="tag">mở rộng</span>';
+  else {
+    if (o.b && x.lv !== o.b) tags += `<span class="tag hl">HSK ${x.lv}</span>`;
+    if (x.pos) tags += `<span class="tag">${esc(posVi(x.pos))}</span>`;
+    if (o.lesson && WORD_LESSON[x.id]) tags += `<span class="tag">Bài ${WORD_LESSON[x.id].n}</span>`;
+  }
+  return `<div class="word"><div class="hz">${esc(x.w)}</div><div class="meta"><div class="py">${esc(x.py)} <span class="hv">${esc(x.hv || '')}</span></div><div>${esc(x.vi)} ${tags}</div></div>
+  <button class="ibtn" data-say="${esc(x.w.replace(/（.*?）/g, ''))}" aria-label="Nghe">🔊</button>${x.ext ? '<span style="width:38px;flex:none"></span>' : `<button class="ibtn k ${on ? 'on' : ''}" data-k="${x.id}" aria-label="Đã thuộc">✓</button>`}</div>`;
 }
 function bindWords(root) {
   root.onclick = e => {
@@ -169,38 +191,43 @@ function bindWords(root) {
 }
 function vocabList(lv) {
   app.innerHTML = `${back(`#/l/${lv}`, 'HSK ' + lv)}<h1>Từ vựng HSK ${lv}</h1>
+  <p class="muted" style="margin-top:-6px">${LV_WORDS[lv].length} từ theo Đề cương thi HSK (công bố 11/2025), chia theo ${LESSONS[lv].length} bài của giáo trình 《新HSK教程${lv}》.</p>
   <input type="search" id="q" placeholder="Tìm chữ Hán, pinyin hoặc nghĩa tiếng Việt…">
   <div id="res"></div>
-  <h2>Danh sách bài học</h2>
-  <div class="lessons">${LESSONS[lv].map((ws, i) => { const k = knownCount(ws); return `<a class="lesson ${k === ws.length ? 'done' : ''}" href="#/l/${lv}/vocab/${i}"><b>Bài ${i + 1}</b><span class="muted">${k}/${ws.length}</span></a>`; }).join('')}</div>`;
+  <h2>Bài học</h2>
+  <div>${LESSONS[lv].map((l, i) => { const k = knownCount(l.all); return `<a class="lessonrow ${k === l.all.length ? 'done' : ''}" href="#/l/${lv}/vocab/${i}"><span class="ln">${l.n}</span><span class="lt"><b>${zh(l.zh)}</b><span class="muted">${esc(l.vi)}</span></span><span class="muted lk">${k}/${l.all.length}</span></a>`; }).join('')}</div>`;
   const q = $('#q'), res = $('#res');
-  const norm = s => s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/đ/g, 'd');
+  const norm = s => s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/đ/g, 'd');
   q.oninput = () => {
-    const t = norm(q.value.trim());
+    const raw = q.value.trim(), t = norm(raw);
     if (!t) { res.innerHTML = ''; return; }
-    const hits = LV_WORDS[lv].filter(x => x.w.includes(q.value.trim()) || norm(x.py).replace(/\s/g, '').includes(t.replace(/\s/g, '')) || norm(x.vi).includes(t) || norm(x.hv).includes(t)).slice(0, 40);
-    res.innerHTML = `<div class="card">${hits.length ? hits.map(wordRow).join('') : '<span class="muted">Không tìm thấy</span>'}</div>`;
+    const hits = LV_WORDS[lv].filter(x => x.w.includes(raw) || norm(x.py).replace(/\s/g, '').includes(t.replace(/\s/g, '')) || norm(x.vi).includes(t) || norm(x.hv).includes(t)).slice(0, 40);
+    res.innerHTML = `<div class="card">${hits.length ? hits.map(x => wordRow(x, { lesson: true })).join('') : '<span class="muted">Không tìm thấy</span>'}</div>`;
   };
   bindWords(res);
 }
 function lessonView(lv, i) {
-  const ws = LESSONS[lv][i]; if (!ws) return vocabList(lv);
+  const l = LESSONS[lv][i]; if (!l) return vocabList(lv);
   app.innerHTML = `${back(`#/l/${lv}/vocab`, 'Danh sách bài')}
-  <div class="row"><h1>HSK ${lv} · Bài ${i + 1}</h1></div>
-  <div class="row" style="margin-bottom:12px"><a class="btn" href="#/l/${lv}/cards/${i}">🃏 Thẻ ghi nhớ</a><a class="btn pink" href="#/l/${lv}/quiz/hv/${i}">🎯 Kiểm tra bài</a></div>
-  <div class="card" id="list">${ws.map(wordRow).join('')}</div>
+  <div class="muted">新HSK教程${lv} · Bài ${l.n}</div>
+  <h1 style="margin:2px 0">${zh(l.zh)}</h1><div class="muted" style="margin-bottom:12px">${esc(l.vi)}</div>
+  <div class="row" style="margin-bottom:4px"><a class="btn" href="#/l/${lv}/cards/${i}">🃏 Thẻ ghi nhớ</a><a class="btn pink" href="#/l/${lv}/quiz/hv/${i}">🎯 Kiểm tra bài</a></div>
+  <h2>Từ mới (${l.words.length})</h2><div class="card wl">${l.words.map(x => wordRow(x, { b: lv })).join('')}</div>
+  ${l.sup.length ? `<h2>Từ bổ sung theo đề cương (${l.sup.length})</h2><p class="muted" style="margin-top:-6px">Có trong đề cương HSK ${lv} nhưng không nằm trong danh sách từ mới của sách, được xếp vào bài có chủ đề gần nhất.</p><div class="card wl">${l.sup.map(x => wordRow(x, { b: lv })).join('')}</div>` : ''}
+  ${l.ext.length ? `<h2>Từ mở rộng · tên riêng (${l.ext.length})</h2><p class="muted" style="margin-top:-6px">Có trong bài của sách nhưng không thuộc đề cương thi HSK 1–3.</p><div class="card wl">${l.ext.map(x => wordRow(x)).join('')}</div>` : ''}
+  ${l.g.length ? `<h2>Ngữ pháp trong bài</h2><div class="card">${l.g.map((t, k) => `<div class="gline"><b>${k + 1}.</b> <span class="zh">${esc(t)}</span></div>`).join('')}<a class="btn ghost block" style="margin-top:10px" href="#/l/${lv}/grammar/${i}">Xem giải thích ngữ pháp ›</a></div>` : ''}
   <div class="row">${i > 0 ? `<a class="btn ghost" href="#/l/${lv}/vocab/${i - 1}">‹ Bài ${i}</a>` : ''}<span class="spacer"></span>${i < LESSONS[lv].length - 1 ? `<a class="btn ghost" href="#/l/${lv}/vocab/${i + 1}">Bài ${i + 2} ›</a>` : ''}</div>`;
-  bindWords($('#list'));
+  app.querySelectorAll('.wl').forEach(bindWords);
 }
 
 /* ========== Thẻ ghi nhớ ========== */
 function flashcards(lv, which) {
   const all = which === 'all';
-  let deck = all ? LV_WORDS[lv].filter(x => !known.has(wkey(x))) : (LESSONS[lv][+which] || []);
+  let deck = all ? LV_WORDS[lv].filter(x => !known.has(wkey(x))) : (LESSONS[lv][+which] ? LESSONS[lv][+which].all : []);
   if (all && !deck.length) deck = LV_WORDS[lv];
   deck = shuffle(deck); if (all) deck = deck.slice(0, 30);
   let i = 0, got = 0;
-  const title = all ? 'Ôn từ chưa thuộc' : `Bài ${+which + 1}`;
+  const title = all ? 'Ôn từ chưa thuộc' : `Bài ${LESSONS[lv][+which].n}: ${esc(LESSONS[lv][+which].zh)}`;
   const draw = () => {
     if (i >= deck.length) {
       app.innerHTML = `${back(`#/l/${lv}`, 'HSK ' + lv)}<div class="card" style="text-align:center"><div style="font-size:60px">🎉</div><h1>Hoàn thành!</h1><p>Bạn đã thuộc <b>${got}</b>/${deck.length} thẻ.</p>
@@ -229,14 +256,30 @@ function flashcards(lv, which) {
 }
 
 /* ========== Ngữ pháp ========== */
-function grammarView(lv) {
-  app.innerHTML = `${back(`#/l/${lv}`, 'HSK ' + lv)}<h1>Ngữ pháp HSK ${lv}</h1>
-  ${GRAMMAR[lv].map((g, i) => `<details class="card gp" ${i === 0 ? 'open' : ''}><summary>${i + 1}. ${esc(g.t)}</summary>
-    <div class="f">${esc(g.f)}</div><div>${esc(g.d)}</div>
-    ${g.ex.map(e => `<div class="ex"><div class="row" style="flex-wrap:nowrap"><div style="flex:1">${zh(e[0])}</div><button class="ibtn" data-say="${esc(e[0])}">🔊</button></div><div class="vi">${esc(e[1])}</div></div>`).join('')}
-  </details>`).join('')}
+function gramDetail(g) {
+  return `<div class="f">${esc(g.f)}</div><div>${esc(g.d)}</div>
+    ${g.ex.map(e => `<div class="ex"><div class="row" style="flex-wrap:nowrap"><div style="flex:1">${zh(e[0])}</div><button class="ibtn" data-say="${esc(e[0])}">🔊</button></div><div class="vi">${esc(e[1])}</div></div>`).join('')}`;
+}
+function grammarView(lv, only) {
+  const GL = (typeof GRAMMAR_LESSON !== 'undefined' && GRAMMAR_LESSON[lv]) || {};
+  const total = LESSONS[lv].reduce((n, l) => n + l.g.length, 0);
+  const list = LESSONS[lv].map((l, i) => {
+    if (!l.g.length || (only != null && i !== +only)) return '';
+    const det = GL[l.n] || [];
+    return `<div class="card" id="g${i}"><div class="muted">Bài ${l.n}</div><b>${zh(l.zh)}</b>
+      ${l.g.map((t, k) => det[k] ? `<details class="gp"><summary>${k + 1}. <span class="zh">${esc(t)}</span> <span class="muted">— ${esc(det[k].vi)}</span></summary>${gramDetail(det[k])}</details>` : `<div class="gline"><b>${k + 1}.</b> <span class="zh">${esc(t)}</span></div>`).join('')}</div>`;
+  }).join('');
+  app.innerHTML = `${back(only != null ? `#/l/${lv}/vocab/${only}` : `#/l/${lv}`, only != null ? 'Về bài học' : 'HSK ' + lv)}<h1>Ngữ pháp HSK ${lv}</h1>
+  <p class="muted" style="margin-top:-6px">${total} điểm ngữ pháp theo từng bài của giáo trình 《新HSK教程${lv}》, đối chiếu Đề cương thi HSK 2025.</p>
+  ${only != null ? '' : `<div class="tabs"><button class="on" data-t="les">Theo bài</button><button data-t="sum">Tóm tắt trọng điểm</button></div>`}
+  <div id="gl">${list}</div>
+  <div id="gs" hidden>${GRAMMAR[lv].map((g, i) => `<details class="card gp" ${i === 0 ? 'open' : ''}><summary>${i + 1}. ${esc(g.t)}</summary>${gramDetail(g)}</details>`).join('')}</div>
   <a class="btn block" href="#/l/${lv}/exam">📝 Làm đề thi thử HSK ${lv}</a>`;
-  app.onclick = e => { const s = e.target.closest('[data-say]'); if (s) speak(s.dataset.say); };
+  app.onclick = e => {
+    const s = e.target.closest('[data-say]'); if (s) return speak(s.dataset.say);
+    const t = e.target.closest('[data-t]');
+    if (t) { app.querySelectorAll('.tabs button').forEach(b => b.classList.toggle('on', b === t)); $('#gl').hidden = t.dataset.t !== 'les'; $('#gs').hidden = t.dataset.t !== 'sum'; }
+  };
   cleanup = () => { app.onclick = null; };
 }
 
@@ -260,7 +303,7 @@ function practiceMenu(lv) {
   app.innerHTML = `${back(`#/l/${lv}`, 'HSK ' + lv)}<h1>Luyện tập HSK ${lv}</h1>
   <div class="card"><b>Phạm vi</b><select id="scope" style="width:100%;margin-top:8px;padding:10px;border-radius:12px;border:2px solid var(--line);font:inherit">
     <option value="all">Toàn bộ HSK ${lv} (${LV_WORDS[lv].length} từ)</option>
-    ${LESSONS[lv].map((_, i) => `<option value="${i}" ${String(i) === String(sel) ? 'selected' : ''}>Bài ${i + 1}</option>`).join('')}
+    ${LESSONS[lv].map((l, i) => `<option value="${i}" ${String(i) === String(sel) ? 'selected' : ''}>Bài ${l.n}: ${esc(l.zh)}</option>`).join('')}
   </select></div>
   <div class="grid">${Object.entries(MODES).map(([k, m]) => `<button class="tile" data-m="${k}" style="text-align:left"><span class="ic">${{ hv: '🀄', vh: '🇻🇳', ls: '🎧', py: '🔤' }[k]}</span><b>${m[0]}</b><span class="muted">${m[1]}</span></button>`).join('')}</div>`;
   app.onclick = e => { const b = e.target.closest('[data-m]'); if (b) { const s = $('#scope').value; store.set('pscope' + lv, s); location.hash = `#/l/${lv}/quiz/${b.dataset.m}/${s}`; } };
@@ -268,7 +311,7 @@ function practiceMenu(lv) {
 }
 function quiz(lv, mode, scope) {
   mode = MODES[mode] ? mode : 'hv';
-  const pool = scope === 'all' || scope == null ? LV_WORDS[lv] : (LESSONS[lv][+scope] || LV_WORDS[lv]);
+  const pool = scope === 'all' || scope == null ? LV_WORDS[lv] : (LESSONS[lv][+scope] ? LESSONS[lv][+scope].all : LV_WORDS[lv]);
   const qs = pick(pool, Math.min(10, pool.length));
   const distract = LV_WORDS[lv];
   let i = 0, score = 0; const wrong = [];
@@ -377,7 +420,8 @@ function examIntro(lv) {
   const total = E.sections.length * 100;
   app.innerHTML = `${back(`#/l/${lv}`, 'HSK ' + lv)}<h1>Thi thử HSK ${lv}</h1>
   <div class="card"><div class="row"><span>⏱️ Thời gian: <b>${E.time} phút</b></span><span>🏆 Đạt: <b>${E.pass}/${total}</b></span></div>
-  <p class="muted">Đề được tạo ngẫu nhiên theo đúng cấu trúc đề HSK ${lv} chính thức. Phần nghe sẽ được đọc bằng giọng máy (cần bật âm lượng); mỗi bài nghe được nghe lại tối đa 2 lần như đề thật.</p></div>
+  <p class="muted">Đề được tạo ngẫu nhiên. Phần nghe được đọc bằng giọng máy (cần bật âm lượng); mỗi bài nghe được nghe lại tối đa 2 lần như đề thật.</p>
+  <p class="muted" style="color:#C2577A">⚠️ Đang cập nhật: đề thi theo cấu trúc HSK mới (áp dụng từ 7/2026) sẽ có trong bản cập nhật tiếp theo. Đề hiện tại là dạng đề cũ.</p></div>
   ${E.sections.map(s => `<div class="card"><b>${esc(s.name)}</b> <span class="muted">(${s.parts.reduce((n, p) => n + p.n, 0)} câu · 100 điểm)</span><ul style="margin:6px 0 0;padding-left:20px">${s.parts.map(p => `<li>${esc(p.t)} <span class="muted">— ${p.n} câu</span></li>`).join('')}</ul></div>`).join('')}
   ${!zhVoice && 'speechSynthesis' in window ? '<div class="card" style="background:var(--pink-s)">⚠️ Chưa tìm thấy giọng đọc tiếng Trung trên thiết bị. Nếu không nghe được, hãy cài giọng “Tiếng Trung (Trung Quốc)” trong cài đặt Chuyển văn bản thành giọng nói, hoặc dùng nút “Xem lời thoại”.</div>' : ''}
   <a class="btn block pink" href="#/l/${lv}/exam/go">Bắt đầu làm bài</a>`;
