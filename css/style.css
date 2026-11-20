@@ -142,3 +142,7 @@ details.gp[open] summary::after{content:"－"}
 .gline:last-of-type{border-bottom:0}
 details.gp{padding:8px 0;border-bottom:1px dashed var(--line)}
 .card details.gp:last-child{border-bottom:0}
+.compbox{display:inline-flex;align-items:center;gap:2px;border:2px dashed var(--pink);border-radius:10px;padding:0 6px;margin:0 2px;background:#fff}
+.compbox b{color:var(--pink);font-size:24px}
+textarea{font:inherit;outline:none}
+textarea:focus{border-color:var(--pri)!important}

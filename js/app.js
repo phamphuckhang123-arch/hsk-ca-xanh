@@ -267,18 +267,14 @@ function grammarView(lv, only) {
     if (!l.g.length || (only != null && i !== +only)) return '';
     const det = GL[l.n] || [];
     return `<div class="card" id="g${i}"><div class="muted">Bài ${l.n}</div><b>${zh(l.zh)}</b>
-      ${l.g.map((t, k) => det[k] ? `<details class="gp"><summary>${k + 1}. <span class="zh">${esc(t)}</span> <span class="muted">— ${esc(det[k].vi)}</span></summary>${gramDetail(det[k])}</details>` : `<div class="gline"><b>${k + 1}.</b> <span class="zh">${esc(t)}</span></div>`).join('')}</div>`;
+      ${l.g.map((t, k) => det[k] ? `<details class="gp" ${only != null ? 'open' : ''}><summary>${k + 1}. <span class="zh">${esc(t)}</span> <span class="muted">— ${esc(det[k].vi)}</span></summary>${gramDetail(det[k])}</details>` : `<div class="gline"><b>${k + 1}.</b> <span class="zh">${esc(t)}</span></div>`).join('')}</div>`;
   }).join('');
   app.innerHTML = `${back(only != null ? `#/l/${lv}/vocab/${only}` : `#/l/${lv}`, only != null ? 'Về bài học' : 'HSK ' + lv)}<h1>Ngữ pháp HSK ${lv}</h1>
   <p class="muted" style="margin-top:-6px">${total} điểm ngữ pháp theo từng bài của giáo trình 《新HSK教程${lv}》, đối chiếu Đề cương thi HSK 2025.</p>
-  ${only != null ? '' : `<div class="tabs"><button class="on" data-t="les">Theo bài</button><button data-t="sum">Tóm tắt trọng điểm</button></div>`}
   <div id="gl">${list}</div>
-  <div id="gs" hidden>${GRAMMAR[lv].map((g, i) => `<details class="card gp" ${i === 0 ? 'open' : ''}><summary>${i + 1}. ${esc(g.t)}</summary>${gramDetail(g)}</details>`).join('')}</div>
   <a class="btn block" href="#/l/${lv}/exam">📝 Làm đề thi thử HSK ${lv}</a>`;
   app.onclick = e => {
     const s = e.target.closest('[data-say]'); if (s) return speak(s.dataset.say);
-    const t = e.target.closest('[data-t]');
-    if (t) { app.querySelectorAll('.tabs button').forEach(b => b.classList.toggle('on', b === t)); $('#gl').hidden = t.dataset.t !== 'les'; $('#gs').hidden = t.dataset.t !== 'sum'; }
   };
   cleanup = () => { app.onclick = null; };
 }
@@ -351,65 +347,46 @@ function quiz(lv, mode, scope) {
   draw();
 }
 
-/* ========== Thi thử ========== */
-function poolFor(lv, key) {
-  // Ưu tiên câu của cấp hiện tại, sau đó bổ sung từ cấp thấp hơn
-  let out = [];
-  for (let l = lv; l >= 1; l--) if (BANK[l][key]) out = out.concat(shuffle(BANK[l][key]).map(it => ({ it, l })));
-  return out;
-}
-function allPics(lv) { const s = []; for (let l = 1; l <= lv; l++) { BANK[l].pics.forEach(p => s.push(p[1])); (BANK[l].sents || []).forEach(p => s.push(p[1])); (BANK[l].dpics || []).forEach(p => s.push(p[1])); } return [...new Set(s)]; }
-function picOpts(lv, correct, n = 3) { const o = [correct, ...pick(allPics(lv).filter(e => e !== correct), n - 1)]; return shuffle(o); }
-const TF = ['✓ Đúng', '✗ Sai'];
-
+/* ========== Thi thử (cấu trúc đề HSK mới 2026) ========== */
+const qCount = lv => EXAMS[lv].sections.reduce((n, s) => n + s.parts.reduce((m, p) => m + p.n, 0), 0);
 function buildExam(lv) {
-  const E = EXAMS[lv], used = {}, qs = [];
-  const take = key => { used[key] = used[key] || poolFor(lv, key); return used[key].shift(); };
+  const E = EXAMS[lv], B = BANK[lv] || {}, qs = [], used = {};
+  const take = (pool, n) => {
+    if (!used[pool]) used[pool] = shuffle(B[pool] || []);
+    const out = []; while (out.length < n && used[pool].length) out.push(used[pool].shift());
+    return out;
+  };
   E.sections.forEach((sec, si) => sec.parts.forEach((pt, pi) => {
-    for (let k = 0; k < pt.n; k++) {
-      const q = { si, pi, part: pt.t, sec: sec.name };
-      const g = pt.g;
-      if (g === 'picTF') {
-        const a = take('pics'); if (!a) continue; const [w, e] = a.it;
-        const truth = Math.random() < 0.5; let shown = e;
-        if (!truth) shown = pick(allPics(lv).filter(x => x !== e), 1)[0];
-        Object.assign(q, { kind: 'mc', pic: shown, audio: pt.audio ? w : null, text: pt.audio ? null : w, opts: TF, ans: truth ? 0 : 1, exp: `${w} = ${e}${truth ? '' : ' (tranh không khớp)'}`, script: w });
-      } else if (g === 'sentPic') {
-        const a = take('sents'); if (!a) continue; const [s, e, t] = a.it; const o = picOpts(lv, e, pt.audio ? 3 : 4);
-        Object.assign(q, { kind: 'mc', audio: pt.audio ? s : null, text: pt.audio ? null : s, picOpts: true, opts: o, ans: o.indexOf(e), script: s, exp: t });
-      } else if (g === 'sentTF') {
-        const a = take('sents'); if (!a) continue; const [s, e, t] = a.it; const truth = Math.random() < 0.5;
-        const shown = truth ? e : pick(allPics(lv).filter(x => x !== e), 1)[0];
-        Object.assign(q, { kind: 'mc', pic: shown, audio: s, opts: TF, ans: truth ? 0 : 1, script: s, exp: t + ` (tranh đúng: ${e})` });
-      } else if (g === 'dpic') {
-        const a = take('dpics'); if (!a) continue; const [s, e, t] = a.it; const o = picOpts(lv, e, 6);
-        Object.assign(q, { kind: 'mc', audio: s, script: s, picOpts: true, opts: o, ans: o.indexOf(e), exp: t });
-      } else if (g === 'dialog') {
-        const a = take(pt.pool); if (!a) continue; const [s, qq, o, an, t] = a.it;
-        Object.assign(q, { kind: 'mc', audio: s, question: qq, script: s + '\n问：' + qq, opts: o, ans: an, exp: t });
-      } else if (g === 'qa') {
-        const a = take('qa'); if (!a) continue; const [qq, aa, t] = a.it;
-        const dist = pick(poolFor(lv, 'qa').map(x => x.it[1]).filter(x => x !== aa), 3); const o = shuffle([aa, ...dist]);
-        Object.assign(q, { kind: 'mc', text: qq, opts: o, ans: o.indexOf(aa), exp: t });
-      } else if (g === 'fill') {
-        const a = take('fill'); if (!a) continue; const [s, w, t] = a.it;
-        const dist = pick([...new Set(poolFor(lv, 'fill').map(x => x.it[1]))].filter(x => x !== w), 3); const o = shuffle([w, ...dist]);
-        Object.assign(q, { kind: 'mc', text: s, opts: o, ans: o.indexOf(w), exp: s.replace('（　）', `【${w}】`) + ' — ' + t });
-      } else if (g === 'judge') {
-        const a = take('judge'); if (!a) continue; const [p, st, tr, t] = a.it;
-        Object.assign(q, { kind: 'mc', audio: pt.audio ? p : null, text: pt.audio ? null : p, star: st, opts: TF, ans: tr ? 0 : 1, script: p, exp: t });
-      } else if (g === 'read') {
-        const a = take('read'); if (!a) continue; const [p, qq, o, an, t] = a.it;
-        Object.assign(q, { kind: 'mc', text: p, question: qq, opts: o, ans: an, exp: t, passage: true });
-      } else if (g === 'order') {
-        const a = take('order'); if (!a) continue; const toks = a.it[0].split('|');
-        let sh = shuffle(toks); let guard = 0; while (sh.join('') === toks.join('') && guard++ < 5) sh = shuffle(toks);
-        Object.assign(q, { kind: 'order', tokens: sh, ans: toks.join(''), exp: toks.join('') + '。 — ' + a.it[1] });
-      } else if (g === 'write') {
-        const a = take('write'); if (!a) continue; const [s, py, c, t] = a.it;
-        Object.assign(q, { kind: 'write', text: s, py, ans: c, exp: s.replace('（　）', `【${c}】`) + ' — ' + t });
+    const push = q => qs.push(Object.assign({ si, pi, sec: sec.name, part: pt.t }, q));
+    if (pt.g === 'pic3') {
+      const allE = (B[pt.pool] || []).map(x => x[1]);
+      take(pt.pool, pt.n).forEach(([text, e, vi]) => {
+        const o = shuffle([e, ...pick(allE.filter(x => x !== e), 2)]);
+        push({ kind: 'mc', picOpts: true, audio: pt.audio ? text : null, text: pt.audio ? null : text, opts: o, ans: o.indexOf(e), script: text, exp: vi });
+      });
+    } else if (pt.g === 'resp3') {
+      take(pt.pool, pt.n).forEach(([qq, a, w1, w2, vi]) => { const o = shuffle([a, w1, w2]); push({ kind: 'mc', audio: qq, script: qq, opts: o, ans: o.indexOf(a), exp: vi }); });
+    } else if (pt.g === 'mc3') {
+      take(pt.pool, pt.n).forEach(([text, qq, o, an, vi]) => push({ kind: 'mc', audio: pt.audio ? text : null, text: pt.audio ? null : text, passage: !pt.audio, question: qq, star: !!pt.star, opts: o, ans: an, script: pt.audio ? text + '\n问：' + qq : null, exp: vi }));
+    } else if (['match6pic', 'match6txt', 'fill6', 'comp6'].includes(pt.g)) {
+      const keyOf = it => pt.g === 'comp6' ? it[4] : it[1];
+      for (let k = 0; k < pt.n; k += 5) {
+        const need = Math.min(5, pt.n - k);
+        const group = [];
+        for (const it of take(pt.pool, need + 3)) { if (group.length < need + 1 && !group.some(g => keyOf(g) === keyOf(it))) group.push(it); else used[pt.pool].push(it); }
+        const real = group.slice(0, need), opts = shuffle(group.map(keyOf));
+        real.forEach(it => {
+          const key = keyOf(it), base = { kind: 'mc', opts, ans: opts.indexOf(key), six: true };
+          if (pt.g === 'match6pic') push(Object.assign(base, { picOpts: true, audio: pt.audio ? it[0] : null, text: pt.audio ? null : it[0], script: it[0], exp: it[2] }));
+          else if (pt.g === 'match6txt') push(Object.assign(base, { text: it[0], exp: it[2] }));
+          else if (pt.g === 'fill6') push(Object.assign(base, { text: it[0], exp: it[0].replace('（　）', '【' + key + '】') + ' — ' + it[2] }));
+          else push(Object.assign(base, { comp: it, picOpts: true, exp: `${it[0]} (${it[1]}): ${[...it[0]][it[2]]} = ${it[3]} + ${it[4]} — ${it[5]}` }));
+        });
       }
-      if (q.kind) qs.push(q);
+    } else if (pt.g === 'write') {
+      take(pt.pool, pt.n).forEach(([s, py, c, vi]) => push({ kind: 'write', text: s, py, ans: c, exp: s.replace('（　）', '【' + c + '】') + ' — ' + vi }));
+    } else if (pt.g === 'make') {
+      take(pt.pool, pt.n).forEach(([w, sample, vi]) => push({ kind: 'make', word: w, sample, exp: 'Câu mẫu: ' + sample + ' — ' + vi }));
     }
   }));
   return qs;
@@ -417,12 +394,11 @@ function buildExam(lv) {
 
 function examIntro(lv) {
   const E = EXAMS[lv];
-  const total = E.sections.length * 100;
   app.innerHTML = `${back(`#/l/${lv}`, 'HSK ' + lv)}<h1>Thi thử HSK ${lv}</h1>
-  <div class="card"><div class="row"><span>⏱️ Thời gian: <b>${E.time} phút</b></span><span>🏆 Đạt: <b>${E.pass}/${total}</b></span></div>
-  <p class="muted">Đề được tạo ngẫu nhiên. Phần nghe được đọc bằng giọng máy (cần bật âm lượng); mỗi bài nghe được nghe lại tối đa 2 lần như đề thật.</p>
-  <p class="muted" style="color:#C2577A">⚠️ Đang cập nhật: đề thi theo cấu trúc HSK mới (áp dụng từ 7/2026) sẽ có trong bản cập nhật tiếp theo. Đề hiện tại là dạng đề cũ.</p></div>
-  ${E.sections.map(s => `<div class="card"><b>${esc(s.name)}</b> <span class="muted">(${s.parts.reduce((n, p) => n + p.n, 0)} câu · 100 điểm)</span><ul style="margin:6px 0 0;padding-left:20px">${s.parts.map(p => `<li>${esc(p.t)} <span class="muted">— ${p.n} câu</span></li>`).join('')}</ul></div>`).join('')}
+  <div class="card"><div class="row"><span>📝 <b>${qCount(lv)} câu</b></span><span>⏱️ Làm bài: <b>${E.time} phút</b></span></div>
+  <p class="muted">Theo cấu trúc đề HSK mới (công bố 12/2025, áp dụng từ 7/2026). Tổng thời gian thi chính thức khoảng ${E.official} phút, gồm cả thời gian điền thông tin.</p>
+  <p class="muted">Đề được trộn ngẫu nhiên mỗi lần làm. Phần nghe đọc bằng giọng máy (cần bật âm lượng), mỗi bài nghe được nghe tối đa 2 lần.</p></div>
+  ${E.sections.map(s => `<div class="card"><b>${esc(s.name)}</b> <span class="muted">(${s.parts.reduce((n, p) => n + p.n, 0)} câu · ${s.time} phút)</span><ul style="margin:6px 0 0;padding-left:20px">${s.parts.map(p => `<li>${esc(p.t)} <span class="muted">— ${p.n} câu</span></li>`).join('')}</ul></div>`).join('')}
   ${!zhVoice && 'speechSynthesis' in window ? '<div class="card" style="background:var(--pink-s)">⚠️ Chưa tìm thấy giọng đọc tiếng Trung trên thiết bị. Nếu không nghe được, hãy cài giọng “Tiếng Trung (Trung Quốc)” trong cài đặt Chuyển văn bản thành giọng nói, hoặc dùng nút “Xem lời thoại”.</div>' : ''}
   <a class="btn block pink" href="#/l/${lv}/exam/go">Bắt đầu làm bài</a>`;
 }
@@ -440,46 +416,44 @@ function examRun(lv) {
   cleanup = () => clearInterval(timer);
   drawQ(); tick();
 }
+const makeOk = (q, a) => { const s = (a || '').trim(); const n = (s.match(/[㐀-鿿]/g) || []).length; return s.includes(q.word) && n >= [...q.word].length + 3 && /[。！？!?.]$/.test(s); };
 function qBody(q, sel, review) {
   let h = '';
   if (q.audio) h += `<div class="audio"><button class="ibtn" id="play">🔊</button><div style="flex:1"><b>Nghe</b><div class="muted" id="plays"></div></div>${review ? '' : '<button class="chip" id="scr" style="background:var(--pri-s);color:var(--pri-d)">Xem lời thoại</button>'}</div><div id="scrbox"></div>`;
-  if (q.pic) h += `<div class="qpic">${q.pic}</div>`;
-  if (q.text && q.passage) h += `<div class="passage">${zh(q.text)}</div>`;
-  else if (q.text && q.kind !== 'write') h += `<div class="passage" style="text-align:center;font-size:22px">${zh(q.text)}</div>`;
-  if (q.star) h += `<div class="star">${zh(q.star)}</div>`;
-  if (q.question && (!q.audio || review)) h += `<div class="star">${zh(q.question)}</div>`;
+  if (q.comp) {
+    const [w, py, ci, given] = q.comp;
+    h += `<div class="passage" style="text-align:center"><div style="color:var(--pri-d);font-weight:600">${esc(py)}</div><div style="font-size:34px;letter-spacing:4px">${[...w].map((c, i) => i === ci ? `<span class="compbox">${esc(given)}<b>＋？</b></span>` : esc(c)).join('')}</div></div>`;
+  }
+  if (q.text && q.kind !== 'write') h += `<div class="passage" ${q.passage ? '' : 'style="text-align:center;font-size:21px"'}>${zhLines(q.text)}</div>`;
+  if (q.question && (!q.audio || review)) h += `<div class="star">${q.star ? '★ ' : ''}${zh(q.question.replace(/^★\s*/, ''))}</div>`;
   if (q.kind === 'mc') {
     h += `<div class="opts ${q.picOpts ? 'pics' : ''}">${q.opts.map((o, k) => {
       let c = sel === k ? 'sel' : '';
       if (review) c = k === q.ans ? 'ok' : (sel === k ? 'bad' : '');
       return q.picOpts ? `<button class="opt pic ${c}" data-i="${k}"><span>${o}</span><span class="l">${L[k]}</span></button>`
-        : `<button class="opt ${c}" data-i="${k}"><span class="l">${L[k]}</span><span>${q.opts === TF ? esc(o) : zh(o)}</span></button>`;
+        : `<button class="opt ${c}" data-i="${k}"><span class="l">${L[k]}</span><span>${q.comp ? `<span style="font-size:26px">${esc(o)}</span>` : zh(o)}</span></button>`;
     }).join('')}</div>`;
-  } else if (q.kind === 'order') {
-    const chosen = sel || [];
-    h += `<div class="muted" style="margin-top:8px">Chạm vào các từ theo đúng thứ tự:</div>
-    <div class="tokens ans" id="ans">${chosen.map((ti, k) => `<button class="tok" data-r="${k}">${esc(q.tokens[ti])}</button>`).join('') || '<span class="muted">…</span>'}</div>
-    <div class="tokens" id="pool">${q.tokens.map((t, ti) => chosen.includes(ti) ? '' : `<button class="tok" data-t="${ti}">${esc(t)}</button>`).join('')}</div>`;
-    if (review) h += `<div class="fb ${orderStr(q, sel) === q.ans ? 'ok' : 'bad'}">Đáp án: ${zh(q.ans + '。')}</div>`;
   } else if (q.kind === 'write') {
     h += `<div class="passage" style="text-align:center;font-size:22px">${esc(q.text).replace('（　）', `<ruby><span style="display:inline-block;min-width:1.6em;border-bottom:2px solid var(--pink)">${esc(sel || '')}</span><rt style="font-size:.6em;color:var(--pink)">${esc(q.py)}</rt></ruby>`)}</div>
     ${review ? `<div class="fb ${sel === q.ans ? 'ok' : 'bad'}">Đáp án: ${esc(q.ans)}</div>` : `<input type="text" id="wr" maxlength="2" placeholder="Viết chữ Hán (${esc(q.py)})" value="${esc(sel || '')}" style="margin-top:12px;font-size:22px;text-align:center" lang="zh-CN">`}`;
+  } else if (q.kind === 'make') {
+    h += `<div class="muted">Dùng từ dưới đây viết một câu tiếng Trung hoàn chỉnh:</div><div class="passage" style="text-align:center;font-size:28px">${zh(q.word)}</div>
+    ${review ? `<div class="explain">Bài làm: ${esc(sel || '(chưa làm)')}</div><div class="fb ${makeOk(q, sel) ? 'ok' : 'bad'}">${makeOk(q, sel) ? 'Đạt yêu cầu cơ bản' : 'Chưa đạt yêu cầu'} (câu phải có từ “${esc(q.word)}”, đủ dài và có dấu câu cuối)</div>`
+      : `<textarea id="mk" rows="3" placeholder="Ví dụ: …${esc(q.word)}…。" lang="zh-CN" style="width:100%;margin-top:12px;font-size:20px;padding:12px;border-radius:14px;border:2px solid var(--line)">${esc(sel || '')}</textarea><div class="muted" style="margin-top:6px">Câu cần có từ trên, ít nhất vài chữ và kết thúc bằng dấu “。” hoặc “？”. Máy chỉ chấm sơ bộ; hãy so với câu mẫu khi xem lại.</div>`}`;
   }
   return h;
 }
-const orderStr = (q, sel) => (sel || []).map(i => q.tokens[i]).join('');
 function isRight(q, a) {
-  if (a == null) return false;
+  if (a == null || a === '') return false;
   if (q.kind === 'mc') return a === q.ans;
-  if (q.kind === 'order') return orderStr(q, a) === q.ans;
   if (q.kind === 'write') return a.trim() === q.ans;
+  if (q.kind === 'make') return makeOk(q, a);
   return false;
 }
 function drawQ() {
   const { qs, idx, lv } = EX; const q = qs[idx];
-  const prevPart = idx > 0 && qs[idx - 1].part === q.part;
   app.innerHTML = `<div class="exambar"><b>HSK ${lv}</b><span class="muted">${esc(q.sec)}</span><span class="spacer"></span><span class="timer" id="tm">--:--</span><button class="chip" id="grid" style="background:var(--pri);">☰ ${EX.ans.filter(a => a != null).length}/${qs.length}</button></div>
-  <div class="card">${prevPart ? '' : ''}<div class="muted" style="font-weight:600;color:var(--pri-d)">${esc(q.part)}</div>
+  <div class="card"><div class="muted" style="font-weight:600;color:var(--pri-d)">${esc(q.part)}</div>
   <div class="qhead" style="margin-top:8px"><span class="qnum">${idx + 1}</span></div>
   ${qBody(q, EX.ans[idx], false)}</div>`;
   const ft = document.createElement('div'); ft.className = 'foot';
@@ -488,7 +462,7 @@ function drawQ() {
   const go = n => { EX.idx = n; drawQ(); window.scrollTo(0, 0); };
   $('#pv').onclick = () => idx > 0 && go(idx - 1);
   if ($('#nx')) $('#nx').onclick = () => go(idx + 1);
-  if ($('#sub')) $('#sub').onclick = () => { const left = EX.ans.filter(a => a == null).length + (qs.length - EX.ans.length); if (confirm(left > 0 ? `Còn ${left} câu chưa làm. Nộp bài?` : 'Nộp bài?')) finishExam(); };
+  if ($('#sub')) $('#sub').onclick = () => { const left = qs.filter((_, i) => EX.ans[i] == null).length; if (confirm(left > 0 ? `Còn ${left} câu chưa làm. Nộp bài?` : 'Nộp bài?')) finishExam(); };
   $('#grid').onclick = () => navModal(false);
   bindQ(q, idx, false);
   const left = EXAMS[lv].time * 60 - Math.floor((Date.now() - EX.start) / 1000);
@@ -507,13 +481,9 @@ function bindQ(q, idx, review) {
   }
   if (review) return;
   if (q.kind === 'mc') app.querySelectorAll('.opt').forEach(b => b.onclick = () => { EX.ans[idx] = +b.dataset.i; app.querySelectorAll('.opt').forEach(x => x.classList.toggle('sel', x === b)); updCount(); });
-  if (q.kind === 'order') {
-    $('#pool').onclick = e => { const t = e.target.closest('[data-t]'); if (!t) return; EX.ans[idx] = (EX.ans[idx] || []).concat(+t.dataset.t); if (!EX.ans[idx].length) EX.ans[idx] = null; redrawBody(q, idx); };
-    $('#ans').onclick = e => { const t = e.target.closest('[data-r]'); if (!t) return; const a = EX.ans[idx].slice(); a.splice(+t.dataset.r, 1); EX.ans[idx] = a.length ? a : null; redrawBody(q, idx); };
-  }
   if (q.kind === 'write') $('#wr').oninput = e => { EX.ans[idx] = e.target.value.trim() || null; updCount(); };
+  if (q.kind === 'make') $('#mk').oninput = e => { EX.ans[idx] = e.target.value.trim() ? e.target.value : null; updCount(); };
 }
-function redrawBody() { drawQ(); }
 function updCount() { const g = $('#grid'); if (g) g.textContent = `☰ ${EX.ans.filter(a => a != null).length}/${EX.qs.length}`; }
 function navModal(review) {
   const m = document.createElement('div'); m.className = 'modal';
@@ -528,10 +498,10 @@ function navModal(review) {
 function finishExam() {
   if (EX.done) return; EX.done = true;
   if (cleanup) { cleanup(); cleanup = null; }
-  speechSynthesis.cancel();
+  if ('speechSynthesis' in window) speechSynthesis.cancel();
   const E = EXAMS[EX.lv];
-  const secs = E.sections.map((s, si) => { const qs = EX.qs.map((q, i) => [q, i]).filter(([q]) => q.si === si); const c = qs.filter(([q, i]) => isRight(q, EX.ans[i])).length; return { name: s.name, c, n: qs.length, sc: Math.round(c / qs.length * 100) }; });
-  const total = secs.reduce((a, s) => a + s.sc, 0), max = secs.length * 100, passed = total >= E.pass;
+  const secs = E.sections.map((s, si) => { const qs = EX.qs.map((q, i) => [q, i]).filter(([q]) => q.si === si); const c = qs.filter(([q, i]) => isRight(q, EX.ans[i])).length; return { name: s.name, c, n: qs.length, sc: qs.length ? Math.round(c / qs.length * 100) : 0 }; });
+  const total = secs.reduce((a, s) => a + s.sc, 0), max = secs.length * 100, passed = total >= max * 0.6;
   EX.result = { secs, total, max, passed };
   const h = store.get('exams', []); h.push({ lv: EX.lv, total, max, passed, at: Date.now() }); store.set('exams', h.slice(-30));
   showResult();
@@ -540,11 +510,11 @@ function showResult() {
   EX.view = 'result';
   const { secs, total, max, passed } = EX.result; const lv = EX.lv;
   const f = $('.foot'); if (f) f.remove();
-  const mins = Math.round((Date.now() - EX.start) / 60000);
   app.innerHTML = `${back(`#/l/${lv}`, 'HSK ' + lv)}
   <div class="card" style="text-align:center"><div class="muted">Kết quả thi thử HSK ${lv}</div><div class="score">${total}<span style="font-size:22px;color:var(--muted)">/${max}</span></div>
-  <span class="pass ${passed ? 'y' : 'n'}">${passed ? '🎉 ĐẠT' : 'CHƯA ĐẠT'} (cần ${EXAMS[lv].pass})</span>
-  <div class="secs">${secs.map(s => `<div class="sec"><span>${esc(s.name)}</span><b>${s.sc} điểm <span class="muted">(${s.c}/${s.n})</span></b></div>`).join('')}</div></div>
+  <span class="pass ${passed ? 'y' : 'n'}">${passed ? '🎉 ĐẠT' : 'CHƯA ĐẠT'} (mức tham khảo ${Math.round(max * 0.6)})</span>
+  <div class="secs">${secs.map(s => `<div class="sec"><span>${esc(s.name)}</span><b>${s.sc} điểm <span class="muted">(${s.c}/${s.n})</span></b></div>`).join('')}</div>
+  <p class="muted" style="margin-bottom:0">Điểm mỗi phần quy về thang 100. Thang điểm chính thức của đề mới chưa có trong tài liệu mẫu, mức “đạt” 60% chỉ để tham khảo.</p></div>
   <div class="row"><button class="btn" id="rv">🔍 Xem lại đáp án</button><button class="btn ghost" id="nw">🔄 Làm đề mới</button></div>`;
   $('#rv').onclick = () => { EX.idx = 0; drawReview(); };
   $('#nw').onclick = () => { EX = null; location.hash = `#/l/${lv}/exam/go`; route(); };
